@@ -1,0 +1,125 @@
+; Write a complete program for the Keil Development System that can run and be demonstrated in the Emulator.
+; The program should allow you to do simulated input and output on the simulated GPIO Port 1.
+; The program should monitor inputs on Pins 24 to 27 and should provide a response on Pins 23 to 16 as follows:
+; Pins 23 -- 16 should be treated as a 8-bit number "D" whose value is initially 0. Pin 23 is the MSB, Pin 16 the LSB.
+; Pins 27 -- 24 should be treated as individual inputs, where a pin's value going from 1 to 0 is to be interpreted as a 
+; 	corresponding [imaginary] push-button being pressed and the transition from 0 to 1 is is to be interpreted as the
+; 	release of the button. For example, if Button 23 is pressed and released, Pin 23's value will go from 1 to 0; then,
+; 	when Button 23 is released, the value of Pin 23 will return from 0 to 1. You can click these values in the emulator.
+; The program should do the following:
+; 	1. Pressing Button 24 should add 1 to the value of D.
+;	2. Pressing Button 25 should subtract 1 from the value of D.
+; 	3. Pressing Button 26 should shift the bits in D to the left by one bit position.
+; 	4. Pressing Button 27 should shift the bits in D to the right by one bit position.
+
+	area	tcd,code,readonly
+	export	__main
+__main		
+
+; Label pin addresses
+DIR EQU 0xE0028018		
+PIN EQU 0xE0028010
+				
+; Set output pins
+	ldr r0,=DIR
+	ldr r1,=0x00FF0000		; mask to set bits 16-23 as outputs
+	str r1,[r0]				; set the outputs		
+		
+; Initialize variables
+	mov r0,#0				; D
+	ldr r3,=PIN
+	mov r4,#0				; previous button 24 states
+	mov r5,#0				; previous button 25 states
+	mov r6,#0				; previous button 26 states
+	mov r7,#0				; previous button 27 states
+
+; Poll the buttons
+polling	
+	ldr r1,[r3]				; read in 32 bits including buttons
+	mov r2,r4				; pass previous state of button 24
+	bl pollbutton24
+	mov r4,r2				; update previous state of button 24
+	mov r2,r5				; pass previous state of button 25
+	bl pollbutton25
+	mov r5,r2				; update previous state of button 25
+	mov r2,r6				; pass previous state of button 26
+	bl pollbutton26
+	mov r6,r2				; update previous state of button 26
+	mov r2,r7				; pass previous state of button 27
+	bl pollbutton27
+	mov r7,r2				; update previous state of button 27
+	mov r8,r0,lsl #16		; position D in the output bits
+	str r8,[r3]				; display output
+	b polling	
+	
+fin b fin
+
+pollbutton24		; pass in D in R0, PIN reading in R1, button 24's previous state in R2
+	stmfd sp!,{r3-r4,r14}	; save registers
+	ldr r3,=0x01000000		; mask to isolate button 24
+	and r4,r1,r3			; isolate the button we're checking
+	cmp r3,r4				; check if button is pressed
+	bne pressed24
+	mov r2,#0				; note button is not pressed & skip to end of subroutine
+	b done24
+pressed24
+	cmp r2,#1				; check if button was pressed in last poll
+	beq done24
+	add r0,#1				; increment D
+	mov r2,#1				; note button was set for next poll
+done24
+	ldmfd sp!,{r3,r4,r14}	; restore registers
+	bx lr
+	
+pollbutton25		; pass in D in R0, PIN reading in R1, button 25's previous state in R2
+	stmfd sp!,{r3,r4,r14}	; save registers
+	ldr r3,=0x02000000		; mask to isolate button 25
+	and r4,r1,r3			; isolate the button we're checking
+	cmp r3,r4				; check if button is pressed
+	bne pressed25
+	mov r2,#0				; note button is not pressed & skip to end of subroutine
+	b done25
+pressed25
+	cmp r2,#1				; check if button was pressed in last poll
+	beq done25
+	sub r0,#1				; decrement D 	*no mention of handling of negative values of D in assignment description*
+	mov r2,#1				; note button was set for next poll
+done25
+	ldmfd sp!,{r3,r4,r14}	; restore registers
+	bx lr
+	
+pollbutton26		; pass in D in R0, PIN reading in R1, button 26's previous state in R2
+	stmfd sp!,{r3,r4,r14}	; save registers
+	ldr r3,=0x04000000		; mask to isolate button 26
+	and r4,r1,r3			; isolate the button we're checking
+	cmp r3,r4				; check if button is pressed
+	bne pressed26
+	mov r2,#0				; note button is not pressed & skip to end of subroutine
+	b done26
+pressed26
+	cmp r2,#1				; check if button was pressed in last poll
+	beq done26
+	mov r0,r0,lsl #1		; shift D left
+	mov r2,#1				; note button was set for next poll
+done26
+	ldmfd sp!,{r3,r4,r14}	; restore registers
+	bx lr
+	
+pollbutton27		; pass in D in R0, PIN reading in R1, button 24's previous state in R2
+	stmfd sp!,{r3,r4,r14}	; save registers
+	ldr r3,=0x08000000		; mask to isolate button 27
+	and r4,r1,r3			; isolate the button we're checking
+	cmp r3,r4				; check if button is pressed
+	bne pressed27
+	mov r2,#0				; note button is not pressed & skip to end of subroutine
+	b done27
+pressed27
+	cmp r2,#1				; check if button was pressed in last poll
+	beq done27
+	mov r0,r0,lsr #1		; shift D right
+	mov r2,#1				; note button was set for next poll
+done27
+	ldmfd sp!,{r3,r4,r14}	; restore registers
+	bx lr
+		
+	end

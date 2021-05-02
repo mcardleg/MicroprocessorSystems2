@@ -1,0 +1,217 @@
+; Write a complete program for the Keil Development System that can run and be demonstrated in the Emulator.
+
+; The main program should "display" the elapsed time, in hours, minutes and seconds, since the program started running,
+; on the 32 bits of GPIO 0 using Binary Code Decimal (BCD) format. 
+; As the time goes by, the "display" should update appropriately. It must be exact.
+
+; For example, say the time to display is "12:34:56". Each character occupies four bits (a "nybble") and  use "1111" as a spacer instead of of the ":". 
+; This means that the above time would appear as: 00010010111100110100111101010110
+
+; The program should consist of a main, subroutines and an interrupt handler. 
+; Once initialised, your program should run in the user mode.
+; You interrupt handler should somehow make use of one of the timers in the LPC2138.
+; It should be extremely simple and very fast. It should do the absolute minimum necessary at interrupt level. Everything else should run in the main. 
+
+; The main program will consist basically of two parts:
+	; 1. The "initialisation" part of the main program sets everything up for subsequent operation. So, it must set up any data necessary, configure 
+	; the timer and the Vectored Interrupt Controller and finally enable interrupts. Note: It is really important to ensure everything is absolutely
+	; ready before you enable interrupts, because as soon as interrupts are enabled, it is possible that an interrupt will immediately occur. 
+	; If all your initialisation is incomplete, then it may cause the interrupt handler to misbehave.
+	
+	; 2. The "application" part that actually implements the display. As you know, the system starts up in a privileged mode. When the initialisation 
+	; part of your main program is finished, make the rest of the program run in the User Mode. (Obviously, the interrupt handler will run in 
+	; Interrupt Mode.)
+
+	area	tcd,code,readonly
+	export	__main
+__main
+
+;INITIALISATION
+
+Mode_USR equ 0x10
+
+; Timer Definitions
+T0	equ	0xE0004000
+T1	equ	0xE0008000
+
+IR	equ	0
+TCR	equ	4
+MCR	equ	0x14
+MR0	equ	0x18
+
+TimerCommandReset equ 2
+TimerCommandRun	equ	1
+TimerModeResetAndInterrupt equ 3
+TimerResetTimer0Interrupt equ 1
+TimerResetAllInterrupts equ 0xFF
+
+; VIC Stuff -- UM, Table 41
+VIC			equ	0xFFFFF000					
+IntEnable	equ	0x10
+VectAddr	equ	0x30
+VectAddr0	equ	0x100
+VectCtrl0	equ	0x200
+
+Timer0ChannelNumber	equ	4				
+Timer0Mask			equ	1<<Timer0ChannelNumber	
+IRQslot_en			equ	5						
+
+; I/O Definitions
+DIR equ 0xE0028018					
+PIN equ 0xE0028010
+	
+	
+; Set output pins
+	ldr r0,=DIR
+	ldr r1,=0xFFFFFFFF	
+	str r1,[r0]				
+
+; Initialize memory
+	mov r1,#0	
+	ldr r5,=interruptTracker	
+	str r1,[r5]
+	ldr r0,=counter
+	str r1,[r0]
+	ldr r1,=0x00F00F00									; 00:00:00 = 00000000111100000000111100000000
+	ldr r0,=PIN											; timer in BCD
+	str r1,[r0]
+
+; Initialise the VIC
+	ldr	r0,=VIC
+	ldr	r1,=irqhan
+	str	r1,[r0,#VectAddr0] 			
+	mov	r1,#Timer0ChannelNumber+(1<<IRQslot_en)
+	str	r1,[r0,#VectCtrl0] 			
+	mov	r1,#Timer0Mask
+	str	r1,[r0,#IntEnable]				
+	mov	r1,#0
+	str	r1,[r0,#VectAddr]   			
+
+; Initialise Timer 0
+	ldr	r0,=T0
+	mov	r1,#TimerCommandReset
+	str	r1,[r0,#TCR]
+	mov	r1,#TimerResetAllInterrupts
+	str	r1,[r0,#IR]
+	ldr	r1,=(18432000/50)-1	 						; frequency of interrupt = 1s
+	str	r1,[r0,#MR0]
+	mov	r1,#TimerModeResetAndInterrupt
+	str	r1,[r0,#MCR]
+	mov	r1,#TimerCommandRun
+	str	r1,[r0,#TCR]
+	
+	MSR CPSR_c,#Mode_USR							;Startup.s already leaves it in user mode, but I have done it again to verify I know how to do it
+
+;APPLICATION
+	
+readyForInterrupt	
+	ldr r1,[r5]
+	cmp r1,#0
+	beq readyForInterrupt
+	
+	ldr r2,=counter
+	ldr r1,[r2]										; Read counter into r1
+	add r1,#1
+	str r1,[r2]
+	
+	mov r3,#0										; hours
+	mov r4,#0										; minutes
+	
+	cmp r1,#3600
+	bcc notHours
+	mov r0,#3600									; Pass divisor and counter to "divide"
+	bl divide										; r0 returns hours, r1  returns remainder
+	bl bcd
+	mov r3,r0
+notHours
+	
+	cmp r1,#60
+	bcc notMinutes
+	mov r0,#60
+	bl divide										; Pass divisor and counter to "divide"
+	bl bcd
+	mov r4,r0
+notMinutes
+
+	mov r0,r1
+	bl bcd
+
+	;position and digits correctly and store at PIN address
+	mov r4,r4,lsl #12
+	mov r3,r3,lsl #24
+	orr r3,r4
+	ldr r2,=0x00F00F00
+	orr r2,r3
+	orr r1,r2
+	ldr r2,=PIN
+	str r1,[r2]
+	
+	mov r1,#0
+	str r1,[r5]										; Reset interrupt tracker to zero
+	b readyForInterrupt
+
+fin b fin
+	
+	
+	
+	
+divide	;r0 inputs divisor, r1 inputs number to be divided, r0 returns result, r1 returns remainder
+	stmfd sp!,{r2,r14}
+	mov r2,r0
+	mov r0,#0
+	
+subtract
+	cmp r1,r2
+	bcc finDivide
+	sub r1,r2
+	add r0,#1
+	b subtract
+	
+finDivide	
+	ldmfd sp!,{r2,r14}
+	bx lr
+
+
+
+
+bcd		;r0 inputs a two digit number in binary, r0 returns it in BCD
+	stmfd sp!,{r1,r14}
+	
+	mov r1,r0						; put the values in the correct registers for "divide"
+	mov r0,#10
+	bl divide						; returns the first digit in r0 and the second in r1
+	mov r0,r0,lsl #4
+	orr r0,r1
+	
+	ldmfd sp!,{r1,r14}
+	bx lr	
+	
+	
+
+	AREA	InterruptStuff, CODE, READONLY
+irqhan	
+	sub	lr,lr,#4
+	stmfd	sp!,{r0-r1,lr}
+
+	;Stop the timer -> VIC IR
+	ldr	r0,=T0
+	mov	r1,#TimerResetTimer0Interrupt
+	str	r1,[r0,#IR]
+
+	;Stop the VIC -> CPU IR
+	ldr	r0,=VIC
+	mov	r1,#0
+	str	r1,[r0,#VectAddr]
+	
+	ldr r0,=interruptTracker									;Only three additional lines
+	mov r1,#1
+	str r1,[r0]
+	
+	ldmfd	sp!,{r0-r1,pc}^	
+	
+	
+	AREA	InterruptData, CODE, READWRITE
+interruptTracker space 4
+counter space 4
+	
+                END
